@@ -7,6 +7,7 @@ import time
 import tempfile
 import streamlit as st
 from rag_chatbot import RAGChatbot
+from utils.document_base_manager import DocumentBaseManager
 
 
 # Set page configuration
@@ -143,6 +144,9 @@ if "chatbot" not in st.session_state:
 if "documents_loaded" not in st.session_state:
     st.session_state.documents_loaded = False
 
+if "document_base_manager" not in st.session_state:
+    st.session_state.document_base_manager = DocumentBaseManager()
+
 # Apply CSS styling
 st.markdown(get_css(), unsafe_allow_html=True)
 
@@ -154,6 +158,9 @@ def initialize_chatbot():
         return False
     
     try:
+        # Check if we have a selected document base
+        selected_base = st.session_state.get("current_base")
+
         # Initialize the chatbot with the provided API key
         st.session_state.chatbot = RAGChatbot(openai_api_key=api_key)
         return True
@@ -180,7 +187,13 @@ def process_uploaded_files(uploaded_files):
         
         # Load documents into the chatbot
         try:
-            num_chunks = st.session_state.chatbot.load_documents(file_paths=file_paths)
+        # Use current document base if available
+            document_base_name = st.session_state.get("current_base")
+            
+            num_chunks = st.session_state.chatbot.load_documents(
+                file_paths=file_paths,
+                document_base_name=document_base_name
+            )
             st.session_state.documents_loaded = True
             st.success(f"Successfully processed {len(uploaded_files)} documents with {num_chunks} chunks.")
         except Exception as e:
@@ -210,6 +223,11 @@ Upload PDF, Word, or Excel files, then ask questions about their content.
 
 # Sidebar for API key and file upload
 with st.sidebar:
+    if "document_bases" not in st.session_state:
+        st.session_state.document_bases = st.session_state.document_base_manager.list_document_bases()
+
+    document_bases = st.session_state.document_bases
+    base_names = [base["name"] for base in document_bases]
     # Configuration header
     st.markdown(get_config_header_html(), unsafe_allow_html=True)
     
@@ -228,6 +246,92 @@ with st.sidebar:
             st.success("Chatbot initialized successfully!")
     
     st.divider()
+
+    # Document Base Selection Section
+    st.markdown("<h3>Document Bases</h3>", unsafe_allow_html=True)
+    
+    # Get available document bases
+    document_bases = st.session_state.document_base_manager.list_document_bases()
+    base_names = [base["name"] for base in document_bases]
+    
+    # Add selection dropdown
+    selected_base = st.selectbox(
+        "Select Document Base", 
+        ["Create New"] + base_names,
+        help="Select an existing document base or create a new one"
+    )
+    
+    if selected_base == "Create New":
+        # UI for creating a new document base
+        new_base_name = st.text_input("New Document Base Name")
+        new_base_desc = st.text_area("Description (optional)")
+        
+        if st.button("Create Document Base") and new_base_name:
+            try:
+                st.session_state.document_base_manager.create_document_base(new_base_name, new_base_desc)
+                st.success(f"Created new document base: {new_base_name}")
+                
+                # Initialize chatbot with new document base if API key is set
+                if st.session_state.get("openai_api_key"):
+                    st.session_state.chatbot = RAGChatbot(
+                        openai_api_key=st.session_state.openai_api_key,
+                        document_base_name=new_base_name,
+                        document_base_manager=st.session_state.document_base_manager
+                    )
+                    st.session_state.current_base = new_base_name
+                    st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    # Add this after displaying info about the selected document base
+    if selected_base != "Create New":
+        base_info = next((base for base in document_bases if base["name"] == selected_base), None)
+        if base_info:
+            st.info(f"Documents: {base_info['num_documents']}\nChunks: {base_info['num_chunks']}")
+            
+            # Add buttons in columns for better layout
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Load button
+                if st.button("Load Base"):
+                    st.session_state.chatbot = RAGChatbot(
+                        openai_api_key=st.session_state.openai_api_key,
+                        document_base_name=selected_base,
+                        document_base_manager=st.session_state.document_base_manager
+                    )
+                    
+                    # Set documents_loaded based on whether retriever was initialized
+                    if st.session_state.chatbot.retriever is not None:
+                        st.session_state.documents_loaded = True
+                        st.success(f"Loaded document base: {selected_base}")
+                    else:
+                        st.warning(f"Document base exists but contains no documents.")
+                        st.session_state.documents_loaded = False
+                    
+                    st.session_state.current_base = selected_base
+                    st.rerun()
+            
+            with col2:
+                # Delete button
+                if st.button("Delete Base", type="secondary"):
+                    delete_confirmed = st.checkbox("Confirm deletion")
+                    
+                    if delete_confirmed:
+                        try:
+                            st.session_state.document_base_manager.delete_document_base(selected_base)
+                            
+                            # Reset if we were using this base
+                            if st.session_state.get("current_base") == selected_base:
+                                st.session_state.current_base = None
+                                st.session_state.documents_loaded = False
+                                if st.session_state.get("chatbot"):
+                                    st.session_state.chatbot = None
+                            
+                            st.success(f"Deleted document base: {selected_base}")
+                            st.session_state.document_bases = None
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting document base: {str(e)}")
     
     # File uploader
     st.markdown(get_upload_header_html(), unsafe_allow_html=True)

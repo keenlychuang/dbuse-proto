@@ -21,6 +21,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from utils.document_processor import DocumentProcessor
 from utils.vector_store import VectorStore
 from utils.prompt_loader import load_prompt
+from utils.document_base_manager import DocumentBaseManager
 
 class StreamingCallbackHandler(BaseCallbackHandler):
     """Callback handler for streaming LLM responses."""
@@ -42,28 +43,38 @@ class RAGChatbot:
     """
     
     def __init__(self, 
-                 persist_directory: str = "./chroma_db",
-                 openai_api_key: Optional[str] = None,
-                 model_name: str = "gpt-4o-mini-2024-07-18",
-                 temperature: float = 0.0,
-                 chunk_size: int = 1000,
-                 chunk_overlap: int = 200):
-        """
-        Initialize the RAG chatbot.
+                persist_directory: str = "./chroma_db",
+                openai_api_key: Optional[str] = None,
+                model_name: str = "gpt-4o-mini-2024-07-18",
+                temperature: float = 0.0,
+                chunk_size: int = 1000,
+                chunk_overlap: int = 200,
+                document_base_name: Optional[str] = None,
+                document_base_manager: Optional[DocumentBaseManager] = None):
         
-        Args:
-            persist_directory: Directory to persist the ChromaDB database
-            openai_api_key: OpenAI API key (if None, will look for OPENAI_API_KEY env variable)
-            model_name: OpenAI model to use for chat completion
-            temperature: Temperature parameter for chat completion
-            chunk_size: Size of text chunks for document processing
-            chunk_overlap: Overlap between consecutive chunks
-        """
         self.openai_api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
         
         # Check if OpenAI API key is available
         if not self.openai_api_key:
-            raise ValueError("OpenAI API key is required. Please provide it or set OPENAI_API_KEY environment variable.")
+            raise ValueError("OpenAI API key is required.")
+        
+        # Initialize document base manager
+        self.document_base_manager = document_base_manager or DocumentBaseManager()
+        self.current_document_base = None
+        
+        # Initialize chroma_exists flag
+        chroma_exists = False
+        
+        # If document base specified, use its directory
+        if document_base_name:
+            try:
+                self.current_document_base = document_base_name
+                persist_directory = self.document_base_manager.get_document_base_path(document_base_name)
+                
+                # Check if this directory already has vector store data
+                chroma_exists = os.path.exists(os.path.join(persist_directory, "chroma.sqlite3"))
+            except KeyError:
+                print(f"Warning: Document base '{document_base_name}' not found. Using default directory.")
         
         # Initialize document processor
         self.document_processor = DocumentProcessor(
@@ -77,15 +88,15 @@ class RAGChatbot:
             openai_api_key=self.openai_api_key
         )
         
-        # Initialize OpenAI chat model with streaming enabled
+        # Initialize OpenAI chat model
         self.llm = ChatOpenAI(
             model_name=model_name,
             temperature=temperature,
             openai_api_key=self.openai_api_key,
-            streaming=True  # Enable streaming
+            streaming=True
         )
         
-        # Create the retriever
+        # Initialize retriever as None first
         self.retriever = None
         
         # Conversation history
@@ -95,23 +106,49 @@ class RAGChatbot:
         self.query_rewriter_prompt = load_prompt("query_rewriter")
         self.qa_prompt = load_prompt("qa_system")
         
-        # Initialize the QA chain
+        # Initialize the QA chain as None
         self.qa_chain = None
         self.rewriter_chain = None
+        
+        # Now set up retriever and chains if loading existing data
+        if chroma_exists:
+            self.retriever = self.vector_store.get_retriever()
+            self._create_qa_chain()
     
-    def load_documents(self, file_paths: List[str] = None, directory_path: str = None):
+    def load_documents(self, file_paths: List[str] = None, directory_path: str = None,
+                       document_base_name: Optional[str] = None):
         """
         Load and process documents from files or a directory.
         
         Args:
             file_paths: List of file paths to process
             directory_path: Directory path containing documents to process
+            document_base_name: Name of document base to save to (creates new if doesn't exist)
                 
         Returns:
             Number of documents loaded
         """
+        # If document base specified, switch to it or create new
+        if document_base_name:
+            if document_base_name != self.current_document_base:
+                try:
+                    # Try to get existing document base
+                    base_path = self.document_base_manager.get_document_base_path(document_base_name)
+                    self._switch_document_base(document_base_name)
+                except KeyError:
+                    # Create new document base
+                    base_path = self.document_base_manager.create_document_base(document_base_name)
+                    self.current_document_base = document_base_name
+                    
+                    # Reinitialize vector store with new path
+                    self.vector_store = VectorStore(
+                        persist_directory=base_path,
+                        openai_api_key=self.openai_api_key
+                    )
+
         processed_chunks = []
         metadatas = []
+        file_count = 0
         
         # Process individual files
         if file_paths:
@@ -125,6 +162,7 @@ class RAGChatbot:
                     
                     processed_chunks.extend(chunks)
                     metadatas.extend(file_metadatas)
+                    file_count+=1
                     
                     print(f"Processed {file_name}: {len(chunks)} chunks extracted")
                 except Exception as e:
@@ -144,6 +182,7 @@ class RAGChatbot:
                     
                     processed_chunks.extend(chunks)
                     metadatas.extend(file_metadatas)
+                    file_count+=1
                     
                     print(f"Processed {rel_path}: {len(chunks)} chunks extracted")
             except Exception as e:
@@ -153,6 +192,15 @@ class RAGChatbot:
         if processed_chunks:
             self.vector_store.add_texts(processed_chunks, metadatas)
             print(f"Added {len(processed_chunks)} chunks to vector store")
+
+            # Update document base metadata if using a document base
+            if self.current_document_base:
+                self.document_base_manager.update_document_base(
+                    self.current_document_base,
+                    num_documents=file_count,
+                    num_chunks=len(processed_chunks),
+                    documents=file_paths if file_paths else []
+                )
             
             # Create retriever
             self.retriever = self.vector_store.get_retriever()
@@ -161,6 +209,42 @@ class RAGChatbot:
             self._create_qa_chain()
         
         return len(processed_chunks)
+
+    def _switch_document_base(self, document_base_name: str) -> None:
+        """
+        Switch to a different document base.
+        
+        Args:
+            document_base_name: Name of document base to switch to
+        
+        Raises:
+            KeyError: If document base doesn't exist
+        """
+        # Get path for the document base
+        base_path = self.document_base_manager.get_document_base_path(document_base_name)
+        
+        # Reinitialize vector store with new document base
+        self.vector_store = VectorStore(
+            persist_directory=base_path,
+            openai_api_key=self.openai_api_key
+        )
+        
+        # Update current document base
+        self.current_document_base = document_base_name
+        
+        # Reset retriever and QA chain
+        self.retriever = self.vector_store.get_retriever()
+        self._create_qa_chain()
+        
+        print(f"Switched to document base: {document_base_name}")
+    
+    def list_document_bases(self):
+        """List available document bases"""
+        return self.document_base_manager.list_document_bases()
+    
+    def get_current_document_base(self):
+        """Get the name of the currently loaded document base"""
+        return self.current_document_base
     
     def _create_qa_chain(self):
         """
