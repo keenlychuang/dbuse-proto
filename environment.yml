@@ -1,43 +1,36 @@
 name: rag_chatbot
 channels:
-  - defaults
   - conda-forge
+  - defaults
+channel_priority: strict
 dependencies:
-  - python=3.9
+  - python=3.9.18
   - pip=22.3.1
+  - pandas=2.0.3
+  - jupyter=1.0.0
+  - notebook=6.5.5
+  - streamlit=1.28.0
+  - networkx=3.1
+  - openpyxl=3.1.2
+  - xlrd=2.0.1
   - pip:
-    # Core libraries
-    - openai
-    - langchain>=0.1.0
-    - langchain-openai
-    - langchain-community
-    - langchain-text-splitters
-    - langchain-core
-    - langchain-chroma  
+    # Core libraries with specific versions
+    - openai==1.3.5
+    - langchain==0.0.335
+    - langchain-openai==0.0.2
+    - langchain-community==0.0.13
+    - langchain-text-splitters==0.0.1
+    - langchain-core==0.1.0
+    - langchain-chroma==0.0.1
     
     # Vector database
-    - chromadb>=0.4.18
+    - chromadb==0.4.18
     
-    # UI
-    - streamlit
+    # Document processing
+    - docx2txt==0.8
+    - pypdf==3.17.0
+    - pdfminer.six==20221105
     
-    # Document processing - Word
-    - docx2txt
-    
-    # Document processing - PDF
-    - pypdf
-    - pdfminer.six
-    
-    # Document processing - Excel
-    - openpyxl
-    - xlrd
-    - pandas
-    
-    # Document processing - Unstructured
-    - unstructured[all]
-    - unstructured-inference
-    - networkx
-    
-    # Development
-    - jupyter
-    - notebook
+    # Keep unstructured at the end as it has many dependencies
+    - unstructured==0.10.30
+    - unstructured-inference==0.7.13
