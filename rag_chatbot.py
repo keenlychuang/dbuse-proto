@@ -352,9 +352,11 @@ class RAGChatbot:
         except Exception as e:
             return f"Error generating answer: {str(e)}"
 
-    def ask_sync(self, question: str, streaming=False):
+    def ask_sync(self, question: str, streaming=False, top_k=None):
         """
         Synchronous version of ask method for compatibility.
+        streaming: Whether to use streaming
+        top_k: Number of document chunks to retrieve (overrides default)
         """
         import asyncio
         
@@ -364,9 +366,9 @@ class RAGChatbot:
             if streaming:
                 # Not easily doable synchronously
                 # Just use non-streaming version
-                return loop.run_until_complete(self.ask(question, streaming=False))
+                return loop.run_until_complete(self.ask(question, streaming=False, top_k=top_k))
             else:
-                return loop.run_until_complete(self.ask(question, streaming=False))
+                return loop.run_until_complete(self.ask(question, streaming=False, top_k=top_k))
         finally:
             loop.close()
     

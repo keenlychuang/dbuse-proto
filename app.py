@@ -120,6 +120,19 @@ def get_about_html():
         </ul>
     </div>
     """
+def get_retrieval_settings_info():
+    return """
+    <div style="background-color: #F8F9FA; padding: 15px; border-radius: 6px; border: 1px solid #EAEAEA; margin-top: 10px;">
+        <h4 style="color: #333333;">About Top K Setting</h4>
+        <p>The "top k" value controls how many document chunks are retrieved when answering your questions:</p>
+        <ul>
+            <li><strong>Lower values</strong> (1-3): Faster, more focused answers but might miss relevant information</li>
+            <li><strong>Medium values</strong> (4-8): Balanced approach suitable for most questions</li>
+            <li><strong>Higher values</strong> (9+): More comprehensive answers but may include less relevant information and use more tokens</li>
+        </ul>
+        <p>Adjust this value based on your specific needs and the complexity of your questions.</p>
+    </div>
+    """
 
 def get_chat_header_html():
     return """
@@ -207,9 +220,12 @@ def ask_question(question):
         return "Please upload and process documents before asking questions."
     else:
         try:
+            # Get top_k from session state or use default
+            top_k = st.session_state.get("top_k", 6)
+
             # Use the synchronous version for Streamlit compatibility
             # The internal context handling will be hidden from the UI
-            answer = st.session_state.chatbot.ask_sync(question)
+            answer = st.session_state.chatbot.ask_sync(question, top_k=top_k)
             return answer
         except Exception as e:
             return f"Error generating response: {str(e)}"
@@ -282,6 +298,7 @@ with st.sidebar:
                     st.rerun()
             except ValueError as e:
                 st.error(str(e))
+
     # Add this after displaying info about the selected document base
     if selected_base != "Create New":
         base_info = next((base for base in document_bases if base["name"] == selected_base), None)
@@ -341,6 +358,26 @@ with st.sidebar:
         type=["pdf", "docx", "xlsx", "xls"],
         accept_multiple_files=True
     )
+
+    st.divider()
+    
+    # Retrieval settings
+    st.markdown("<h3>Retrieval Settings</h3>", unsafe_allow_html=True)
+    
+    # Add slider for top_k parameter
+    top_k = st.slider(
+        "Number of chunks to retrieve (top k)",
+        min_value=1,
+        max_value=20,
+        value=6,  # Default value from vector_store.py
+        step=1,
+        help="Controls how many document chunks are retrieved when answering. Higher values may give more comprehensive answers but increase token usage."
+    )
+    
+    # Store in session state
+    st.session_state.top_k = top_k
+
+    # st.markdown(get_retrieval_settings_info(), unsafe_allow_html=True)
     
     # Process button
     if uploaded_files:
@@ -392,14 +429,15 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                 # Simulate streaming in a Streamlit-friendly way
                 # First, get the complete response
                 with st.spinner("Thinking..."):
-                    full_response = st.session_state.chatbot.ask_sync(prompt)
+                    top_k = st.session_state.get("top_k", 6)
+                    full_response = st.session_state.chatbot.ask_sync(prompt, top_k=top_k)
                 
                 # Then display it character by character to simulate streaming
                 displayed_response = ""
                 for char in full_response:
                     displayed_response += char
                     message_placeholder.markdown(displayed_response + "▌")
-                    time.sleep(0.005)  # Small delay for streaming effect
+                    time.sleep(0.003)  # Small delay for streaming effect
                 
                 # Final display without cursor
                 message_placeholder.markdown(full_response)

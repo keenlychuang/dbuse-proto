@@ -15,6 +15,6 @@ template: |
   
   Answer the question based on the provided context and conversation history. If the context doesn't contain the information needed to answer this question, say "I don't have enough information to answer this question." and suggest what other information might be helpful.
   
-  Important: For each piece of information you use, include a citation to the source document using footnote notation [1], [2], etc. At the end of your answer, list all the source documents you cited with detailed information.
-  
+  Important: For each piece of information you use FROM THE CURRENT CONTEXT (not conversation history), include a citation to the source document using footnote notation [1], [2], etc. At the end of your answer, list all the source documents you cited with detailed information.
+
   Answer:
